@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>말벌 판별기 - AI 이미지 분석</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- TensorFlow.js and Teachable Machine Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+        }
+        canvas {
+            border-radius: 1rem;
+            width: 100% !important;
+            height: auto !important;
+            max-height: 380px;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col justify-between items-center p-4 sm:p-6">
+
+    <!-- Main Container -->
+    <div class="w-full max-w-md bg-white rounded-3xl shadow-sm border border-slate-100 p-6 space-y-6 my-auto">
+        
+        <!-- App Header -->
+        <header class="text-center space-y-2">
+            <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 mb-1">
+                <i class="fa-solid fa-bug text-2xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900">말벌 판별기</h1>
+            <p class="text-xs text-slate-500 font-medium">AI 모델이 말벌과 일반 벌을 실시간으로 구분합니다</p>
+        </header>
+
+        <!-- Model Status Banner -->
+        <div id="status-badge" class="flex items-center justify-center gap-2 p-3 bg-amber-50 rounded-2xl text-xs font-semibold text-amber-700 transition-all">
+            <div id="status-spinner" class="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+            <span id="status-text">AI 분석 모델을 불러오는 중...</span>
+        </div>
+
+        <!-- Mode Toggle Tabs -->
+        <div class="flex p-1 bg-slate-100 rounded-2xl text-xs font-semibold text-slate-600">
+            <button id="tab-webcam" onclick="switchMode('webcam')" class="flex-1 py-2.5 rounded-xl transition-all shadow-sm bg-white text-slate-900 flex items-center justify-center gap-1.5">
+                <i class="fa-solid fa-camera"></i> 실시간 카메라
+            </button>
+            <button id="tab-upload" onclick="switchMode('upload')" class="flex-1 py-2.5 rounded-xl transition-all hover:text-slate-900 flex items-center justify-center gap-1.5">
+                <i class="fa-solid fa-image"></i> 사진 업로드
+            </button>
+        </div>
+
+        <!-- Visual Display Area -->
+        <div class="relative w-full bg-slate-900 rounded-2xl overflow-hidden aspect-square flex items-center justify-center shadow-inner">
+            
+            <!-- Webcam Container -->
+            <div id="webcam-container" class="w-full h-full flex items-center justify-center">
+                <p class="text-slate-400 text-xs text-center px-4">카메라를 시작하려면 아래 버튼을 누르세요</p>
+            </div>
+
+            <!-- Upload Container (Hidden by default) -->
+            <div id="upload-container" class="hidden w-full h-full flex flex-col items-center justify-center p-4 text-center cursor-pointer group hover:bg-slate-800 transition-all" onclick="document.getElementById('file-input').click()">
+                <img id="image-preview" class="hidden w-full h-full object-cover rounded-xl" alt="벌 이미지 수신"/>
+                <div id="upload-placeholder" class="flex flex-col items-center space-y-2">
+                    <div class="w-12 h-12 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <i class="fa-solid fa-cloud-arrow-up text-xl"></i>
+                    </div>
+                    <p class="text-xs font-medium text-slate-300">클릭하여 사진 선택하기</p>
+                    <p class="text-[10px] text-slate-500">JPG, PNG 파일 지원</p>
+                </div>
+                <input type="file" id="file-input" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+            </div>
+        </div>
+
+        <!-- Camera Start Button (Webcam Mode Only) -->
+        <div id="camera-controls">
+            <button id="btn-camera" onclick="toggleWebcam()" disabled class="w-full py-3.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold rounded-2xl shadow-sm transition-all flex items-center justify-center gap-2 text-sm">
+                <i class="fa-solid fa-play"></i> 카메라 시작하기
+            </button>
+        </div>
+
+        <!-- Results Dashboard -->
+        <div class="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-4">
+            <div class="flex justify-between items-center">
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">분석 결과</span>
+                <span id="top-prediction-tag" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-200 text-slate-600">대기 중</span>
+            </div>
+
+            <!-- Dynamic Bars Container -->
+            <div id="label-container" class="space-y-3">
+                <p class="text-xs text-slate-400 text-center py-2">사진을 업로드하거나 카메라인식을 시작하면 결과가 표시됩니다.</p>
+            </div>
+        </div>
+
+        <!-- Hornet Safety Advice Box (Dynamic Display) -->
+        <div id="safety-alert" class="hidden p-4 rounded-2xl bg-red-50 border border-red-100 text-red-800 text-xs space-y-1.5">
+            <div class="flex items-center gap-1.5 font-bold text-red-700">
+                <i class="fa-solid fa-triangle-exclamation text-sm"></i>
+                <span>말벌 감지 시 행동 요령</span>
+            </div>
+            <ul class="list-disc list-inside space-y-1 text-slate-600 text-[11px] leading-relaxed pl-1">
+                <li>자세를 낮추고 머리를 감싸며 빠르게 20m 이상 이동하세요.</li>
+                <li>팔을 휘두르는 행동은 말벌을 자극하므로 절대 금물입니다.</li>
+                <li>상처 부위는 차가운 물로 씻고 즉시 병원을 방문하세요.</li>
+            </ul>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="mt-6 text-center text-[11px] text-slate-400 space-y-1">
+        <p>Teachable Machine Model Powered</p>
+    </footer>
+
+    <script>
+        // Teachable Machine Model Settings
+        const MODEL_URL = "https://teachablemachine.withgoogle.com/models/CaZ73EB5S/";
+        
+        let model, webcam, maxPredictions;
+        let isWebcamRunning = false;
+        let currentMode = 'webcam'; // 'webcam' or 'upload'
+
+        // Load Model on Page Load
+        window.addEventListener('DOMContentLoaded', async () => {
+            await initModel();
+        });
+
+        // Initialize Teachable Machine Model
+        async function initModel() {
+            const modelURL = MODEL_URL + "model.json";
+            const metadataURL = MODEL_URL + "metadata.json";
+
+            try {
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                // Update UI upon successful model load
+                const statusBadge = document.getElementById('status-badge');
+                statusBadge.className = "flex items-center justify-center gap-2 p-3 bg-emerald-50 rounded-2xl text-xs font-semibold text-emerald-700 transition-all";
+                document.getElementById('status-spinner').className = "hidden";
+                document.getElementById('status-text').innerText = "AI 분석 준비 완료";
+                
+                document.getElementById('btn-camera').disabled = false;
+                setupPredictionSkeleton();
+            } catch (error) {
+                console.error("Model Loading Error:", error);
+                const statusBadge = document.getElementById('status-badge');
+                statusBadge.className = "flex items-center justify-center gap-2 p-3 bg-red-50 rounded-2xl text-xs font-semibold text-red-700 transition-all";
+                document.getElementById('status-spinner').className = "hidden";
+                document.getElementById('status-text').innerText = "모델을 불러오지 못했습니다. 네트워크를 확인해주세요.";
+            }
+        }
+
+        // Initialize empty result skeletal bars
+        function setupPredictionSkeleton() {
+            const labelContainer = document.getElementById('label-container');
+            labelContainer.innerHTML = '';
+            
+            for (let i = 0; i < maxPredictions; i++) {
+                const barGroup = document.createElement('div');
+                barGroup.className = "space-y-1";
+                barGroup.innerHTML = `
+                    <div class="flex justify-between text-xs font-medium text-slate-700">
+                        <span id="class-label-${i}">클래스 ${i+1}</span>
+                        <span id="class-prob-${i}">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div id="class-bar-${i}" class="bg-amber-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                `;
+                labelContainer.appendChild(barGroup);
+            }
+        }
+
+        // Switch between Camera and Image Upload
+        function switchMode(mode) {
+            currentMode = mode;
+            const tabWebcam = document.getElementById('tab-webcam');
+            const tabUpload = document.getElementById('tab-upload');
+            const webcamContainer = document.getElementById('webcam-container');
+            const uploadContainer = document.getElementById('upload-container');
+            const cameraControls = document.getElementById('camera-controls');
+
+            if (mode === 'webcam') {
+                tabWebcam.className = "flex-1 py-2.5 rounded-xl transition-all shadow-sm bg-white text-slate-900 flex items-center justify-center gap-1.5";
+                tabUpload.className = "flex-1 py-2.5 rounded-xl transition-all hover:text-slate-900 flex items-center justify-center gap-1.5";
+                webcamContainer.classList.remove('hidden');
+                uploadContainer.classList.add('hidden');
+                cameraControls.classList.remove('hidden');
+            } else {
+                tabUpload.className = "flex-1 py-2.5 rounded-xl transition-all shadow-sm bg-white text-slate-900 flex items-center justify-center gap-1.5";
+                tabWebcam.className = "flex-1 py-2.5 rounded-xl transition-all hover:text-slate-900 flex items-center justify-center gap-1.5";
+                uploadContainer.classList.remove('hidden');
+                webcamContainer.classList.add('hidden');
+                cameraControls.classList.add('hidden');
+
+                // Stop webcam if active
+                if (isWebcamRunning) {
+                    toggleWebcam();
+                }
+            }
+        }
+
+        // Toggle Webcam Stream
+        async function toggleWebcam() {
+            const btn = document.getElementById('btn-camera');
+
+            if (!isWebcamRunning) {
+                try {
+                    const flip = true; 
+                    webcam = new tmImage.Webcam(360, 360, flip);
+                    await webcam.setup({ facingMode: "environment" }); // Request environment camera on mobile
+                    await webcam.play();
+                    
+                    isWebcamRunning = true;
+                    btn.innerHTML = `<i class="fa-solid fa-stop"></i> 카메라 정지하기`;
+                    btn.className = "w-full py-3.5 bg-slate-700 hover:bg-slate-800 text-white font-semibold rounded-2xl shadow-sm transition-all flex items-center justify-center gap-2 text-sm";
+                    
+                    const webcamContainer = document.getElementById('webcam-container');
+                    webcamContainer.innerHTML = '';
+                    webcamContainer.appendChild(webcam.canvas);
+
+                    window.requestAnimationFrame(webcamLoop);
+                } catch (e) {
+                    alert('카메라 접근 권한을 허용해 주세요.');
+                    console.error('Camera access failed:', e);
+                }
+            } else {
+                if (webcam) {
+                    await webcam.stop();
+                }
+                isWebcamRunning = false;
+                btn.innerHTML = `<i class="fa-solid fa-play"></i> 카메라 시작하기`;
+                btn.className = "w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-2xl shadow-sm transition-all flex items-center justify-center gap-2 text-sm";
+                
+                document.getElementById('webcam-container').innerHTML = `
+                    <p class="text-slate-400 text-xs text-center px-4">카메라를 시작하려면 아래 버튼을 누르세요</p>
+                `;
+            }
+        }
+
+        // Real-time animation frame loop
+        async function webcamLoop() {
+            if (isWebcamRunning) {
+                webcam.update();
+                await predict(webcam.canvas);
+                window.requestAnimationFrame(webcamLoop);
+            }
+        }
+
+        // Image Upload File Handler
+        async function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const imgElement = document.getElementById('image-preview');
+                imgElement.src = e.target.result;
+                imgElement.classList.remove('hidden');
+                document.getElementById('upload-placeholder').classList.add('hidden');
+
+                // Wait for image render before predicting
+                imgElement.onload = async () => {
+                    await predict(imgElement);
+                };
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Execute Prediction Logic
+        async function predict(imageElement) {
+            if (!model) return;
+
+            const prediction = await model.predict(imageElement);
+            
+            let highestProbability = -1;
+            let topClassName = "";
+
+            for (let i = 0; i < maxPredictions; i++) {
+                const className = prediction[i].className;
+                const probability = (prediction[i].probability * 100).toFixed(1);
+
+                // Update Class Labels and Bars
+                const classLabelEl = document.getElementById(`class-label-${i}`);
+                const classProbEl = document.getElementById(`class-prob-${i}`);
+                const classBarEl = document.getElementById(`class-bar-${i}`);
+
+                if (classLabelEl && classProbEl && classBarEl) {
+                    classLabelEl.innerText = className;
+                    classProbEl.innerText = `${probability}%`;
+                    classBarEl.style.width = `${probability}%`;
+
+                    // Highlight probability bar color
+                    if (prediction[i].probability > 0.5) {
+                        classBarEl.className = className.includes("말벌") && !className.includes("아닌") 
+                            ? "bg-red-500 h-2 rounded-full transition-all duration-300"
+                            : "bg-emerald-500 h-2 rounded-full transition-all duration-300";
+                    } else {
+                        classBarEl.className = "bg-amber-400 h-2 rounded-full transition-all duration-300";
+                    }
+                }
+
+                if (prediction[i].probability > highestProbability) {
+                    highestProbability = prediction[i].probability;
+                    topClassName = className;
+                }
+            }
+
+            // Update Top Prediction Tag & Safety Box
+            const topTag = document.getElementById('top-prediction-tag');
+            const safetyAlert = document.getElementById('safety-alert');
+
+            if (highestProbability > 0.4) {
+                topTag.innerText = `${topClassName} (${(highestProbability * 100).toFixed(0)}%)`;
+                
+                // Check if top class contains '말벌' (and isn't '말벌이 아닌')
+                const isHornet = topClassName.includes("말벌") && !topClassName.includes("아닌") && !topClassName.includes("안");
+                
+                if (isHornet) {
+                    topTag.className = "text-xs font-bold px-3 py-1 rounded-full bg-red-100 text-red-700 animate-pulse";
+                    safetyAlert.classList.remove('hidden');
+                } else {
+                    topTag.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-700";
+                    safetyAlert.classList.add('hidden');
+                }
+            } else {
+                topTag.innerText = "식별 불가";
+                topTag.className = "text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-200 text-slate-600";
+                safetyAlert.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
